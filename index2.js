@@ -5,11 +5,11 @@ const port = 3000; // Make sure this matches the port your server is listening o
 
 // Add a new route to run the Python script
 app.get('/run-python', (req, res) => {
-  const pythonScript = './py-scripts/get-hashes.py'; // Path to your Python script
-  const filePath = './test.txt'; // Path to the file you want to hash
+  const pythonScript = './py-scripts/Static Malware Analyzer.py'; // Path to your Python script
+  const filePath = './Evasive Panda'; // Path to the file you want to hash
 
   // Spawn the Python process
-  const pythonProcess = spawn('py', [pythonScript, filePath]);
+  const pythonProcess = spawn('.venv/bin/python3', [pythonScript, filePath]);
 
   let scriptOutput = '';
   let scriptError = '';
