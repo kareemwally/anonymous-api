@@ -15,7 +15,7 @@ const File = require('./models/File');
 const AnalysisReport = require('./models/AnalysisReport');
 
 app.use(cors());
-mongoose.connect(process.env.DB_URI)
+mongoose.connect(//process.env.DB_URI//)
 .then(() => console.log('Connected to MongoDB'))
 .catch(err => console.error('MongoDB connection error:', err));
 
