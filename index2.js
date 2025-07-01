@@ -10,6 +10,11 @@ const cors = require('cors');
 const axios = require('axios');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const nodemailer = require('nodemailer');
+const session = require('express-session');
+const passport = require('passport');
+const GoogleStrategy = require('passport-google-oauth20').Strategy;
+const GitHubStrategy = require('passport-github2').Strategy;
 const app = express();
 const port = 3000;
 
@@ -17,9 +22,11 @@ const port = 3000;
 const File = require('./models/File');
 const AnalysisReport = require('./models/AnalysisReport');
 const User = require('./models/User');
+const Complaint = require('./models/Complaint');
 
 // Import middleware
 const auth = require('./middleware/auth');
+const optionalAuth = require('./middleware/optionalAuth');
 
 app.use(cors());
 app.use(express.json()); // For parsing JSON bodies
@@ -40,6 +47,102 @@ const AI_MODEL_URL = process.env.AI_MODEL_URL;
 const AI_MODEL_HEADERS = {
   "Authorization": `Bearer ${process.env.AI_MODEL_TOKEN}`
 };
+
+// Nodemailer transporter setup
+const transporter = nodemailer.createTransport({
+  host: process.env.EMAIL_HOST,
+  port: process.env.EMAIL_PORT,
+  secure: false, // true for 465, false for other ports
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS
+  }
+});
+
+// Session and Passport setup
+app.use(session({
+  secret: process.env.JWT_SECRET,
+  resave: false,
+  saveUninitialized: false
+}));
+app.use(passport.initialize());
+app.use(passport.session());
+
+passport.serializeUser((user, done) => {
+  done(null, user._id);
+});
+passport.deserializeUser(async (id, done) => {
+  try {
+    const user = await User.findById(id);
+    done(null, user);
+  } catch (err) {
+    done(err, null);
+  }
+});
+
+// Google OAuth Strategy
+passport.use(new GoogleStrategy({
+  clientID: process.env.GOOGLE_CLIENT_ID,
+  clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+  callbackURL: process.env.OAUTH_CALLBACK_BASE + '/auth/google/callback',
+}, async (accessToken, refreshToken, profile, done) => {
+  try {
+    let user = await User.findOne({ googleId: profile.id });
+    if (!user) {
+      user = await User.create({
+        name: profile.displayName,
+        email: profile.emails[0].value,
+        username: profile.emails[0].value,
+        googleId: profile.id,
+        role: 'other'
+      });
+    }
+    return done(null, user);
+  } catch (err) {
+    return done(err, null);
+  }
+}));
+
+// GitHub OAuth Strategy
+passport.use(new GitHubStrategy({
+  clientID: process.env.GITHUB_CLIENT_ID,
+  clientSecret: process.env.GITHUB_CLIENT_SECRET,
+  callbackURL: process.env.OAUTH_CALLBACK_BASE + '/auth/github/callback',
+  scope: ['user:email']
+}, async (accessToken, refreshToken, profile, done) => {
+  try {
+    let email = (profile.emails && profile.emails[0] && profile.emails[0].value) || `${profile.username}@github.com`;
+    let user = await User.findOne({ githubId: profile.id });
+    if (!user) {
+      user = await User.create({
+        name: profile.displayName || profile.username,
+        email: email,
+        username: email,
+        githubId: profile.id,
+        role: 'other'
+      });
+    }
+    return done(null, user);
+  } catch (err) {
+    return done(err, null);
+  }
+}));
+
+// Google OAuth routes
+app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
+app.get('/auth/google/callback', passport.authenticate('google', { failureRedirect: '/' }), (req, res) => {
+  // Issue JWT and redirect with token
+  const token = jwt.sign({ userId: req.user._id }, process.env.JWT_SECRET, { expiresIn: '24h' });
+  res.redirect(`/oauth-success?token=${token}`);
+});
+
+// GitHub OAuth routes
+app.get('/auth/github', passport.authenticate('github', { scope: ['user:email'] }));
+app.get('/auth/github/callback', passport.authenticate('github', { failureRedirect: '/' }), (req, res) => {
+  // Issue JWT and redirect with token
+  const token = jwt.sign({ userId: req.user._id }, process.env.JWT_SECRET, { expiresIn: '24h' });
+  res.redirect(`/oauth-success?token=${token}`);
+});
 
 // Authentication Routes
 app.post('/signup', async (req, res) => {
@@ -155,10 +258,59 @@ app.post('/login', async (req, res) => {
   }
 });
 
-// Protected route to get user profile
+// Enhanced profile endpoint with upload history and pagination
 app.get('/profile', auth, async (req, res) => {
   try {
-    res.json({ user: req.user });
+    const user = req.user;
+    const page = parseInt(req.query.page) || 1;
+    const pageSize = 5;
+    // Find files uploaded by this user
+    const files = await File.find({ userId: user._id })
+      .sort({ uploadDate: -1 })
+      .skip((page - 1) * pageSize)
+      .limit(pageSize)
+      .lean();
+    // Get total count for pagination
+    const totalFiles = await File.countDocuments({ userId: user._id });
+    // For each file, get the analysis report
+    const fileIds = files.map(f => f._id);
+    const reports = await AnalysisReport.find({ fileId: { $in: fileIds } }).lean();
+    const reportMap = {};
+    for (const r of reports) {
+      reportMap[r.fileId.toString()] = r;
+    }
+    // Build history array
+    const history = files.map(f => {
+      const report = reportMap[f._id.toString()];
+      return {
+        name: f.name,
+        status: f.status,
+        uploadDate: f.uploadDate,
+        family: report?.predictions_family || [],
+        accuracy: report?.probability_family || [],
+        report: report || null
+      };
+    });
+    res.json({
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        jobTitle: user.jobTitle,
+        yearsOfExperience: user.yearsOfExperience,
+        company: user.company,
+        role: user.role,
+        createdAt: user.createdAt
+      },
+      history,
+      pagination: {
+        page,
+        pageSize,
+        totalFiles,
+        totalPages: Math.ceil(totalFiles / pageSize)
+      }
+    });
   } catch (error) {
     console.error('Profile error:', error);
     res.status(500).json({ error: 'Server error' });
@@ -238,7 +390,7 @@ function isFileSizeSuitable(filePath) {
   }
 }
 
-app.post('/upload', auth, upload.single('file'), async (req, res) => {
+app.post('/upload', optionalAuth, upload.single('file'), async (req, res) => {
   if (!req.file) {
     console.log('No file uploaded');
     return res.status(400).send('No file uploaded.');
@@ -247,7 +399,10 @@ app.post('/upload', auth, upload.single('file'), async (req, res) => {
   const filePath = req.file.path;
   const originalName = req.file.originalname;
   const password = req.body.password || '';
-  const userId = req.user._id; // Get authenticated user's ID
+
+  // Use req.user if present, otherwise guest (0)
+  let userId = req.user ? req.user._id : 0;
+  console.log('Upload userId:', userId);
 
   try {
     // Always call the analyzer with file, original name, and optional password
@@ -261,6 +416,7 @@ app.post('/upload', auth, upload.single('file'), async (req, res) => {
     // For each sample, run get-hashes, check DB, and build response
     const results = [];
     const filesToCleanup = [];
+    const baseUrl = req.protocol + '://' + req.get('host');
     for (const sample of analysisResult.results) {
       // The analyzer returns: { filename, file_path, analysis, plots }
       const sampleFile = sample.filename;
@@ -271,12 +427,15 @@ app.post('/upload', auth, upload.single('file'), async (req, res) => {
       let dbReport = null;
       let aiResult = null;
       
+      // Convert plots to full URLs
+      const plotLinks = (sample.plots || []).map(p => p.startsWith('http') ? p : baseUrl + p);
+      
       // Check if analysis returned an error (e.g., file size unsuitable)
       if (sample.analysis && sample.analysis.error) {
         results.push({
           filename: sampleFile,
           analysis: sample.analysis,
-          plots: sample.plots,
+          plots: plotLinks,
           hash: null,
           dbStatus: 'analysis_error',
           dbReport: null,
@@ -305,13 +464,13 @@ app.post('/upload', auth, upload.single('file'), async (req, res) => {
                   if (!aiResult.predictions_file) {
                     throw new Error('AI model did not return predictions_file');
                   }
-                  // Save file to database with authenticated user's ID
+                  // Save file to database with userId (0 for guest, or ObjectId for user)
                   const newFileDoc = await File.create({
                     name: sampleFile,
                     hash: hashResult.md5,
                     status: 'analyzed',
                     uploadDate: new Date(),
-                    userId: userId // Use authenticated user's ID
+                    userId: userId
                   });
 
                   // Save AI analysis report to database
@@ -348,7 +507,7 @@ app.post('/upload', auth, upload.single('file'), async (req, res) => {
       results.push({
         filename: sampleFile,
         analysis: sample.analysis,
-        plots: sample.plots,
+        plots: plotLinks,
         hash: hashResult,
         dbStatus,
         dbReport,
@@ -363,6 +522,71 @@ app.post('/upload', auth, upload.single('file'), async (req, res) => {
     console.error('Error processing file:', error);
     fs.unlink(filePath, () => {});
     res.status(500).send(error.message);
+  }
+});
+
+// Complaints endpoint
+app.post('/complaints', async (req, res) => {
+  try {
+    console.log('--- Incoming complaint request ---');
+    console.log('Request body:', req.body);
+    // If user is authenticated, get userId from auth middleware
+    let userId = null;
+    let email = null;
+    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+      try {
+        const token = req.headers.authorization.replace('Bearer ', '');
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        userId = decoded.userId;
+        console.log('Authenticated userId:', userId);
+      } catch (err) {
+        console.log('JWT decode error:', err);
+        // Invalid token, ignore and treat as guest
+      }
+    }
+    // Accept email from body for guests
+    if (req.body.email) {
+      email = req.body.email;
+      console.log('Guest email:', email);
+    }
+    const { message } = req.body;
+    if (!message || (!userId && !email)) {
+      console.log('Missing message or user/email');
+      return res.status(400).json({ error: 'Message and (user or email) are required.' });
+    }
+    const complaint = new Complaint({
+      user: userId || undefined,
+      email: email || undefined,
+      message
+    });
+    await complaint.save();
+    console.log('Complaint saved to DB:', complaint);
+
+    // Send email to support
+    const supportEmail = process.env.SUPPORT_EMAIL;
+    let subject = 'New Complaint Submitted';
+    let fromEmail = email || process.env.EMAIL_USER;
+    let text = `A new complaint has been submitted.\n\n` +
+      `From: ${email ? email : 'Authenticated User: ' + userId}\n` +
+      `Message: ${message}\n` +
+      `Timestamp: ${complaint.createdAt}`;
+    try {
+      let mailResult = await transporter.sendMail({
+        from: fromEmail,
+        to: supportEmail,
+        subject,
+        text
+      });
+      console.log('Email sent:', mailResult);
+    } catch (mailErr) {
+      console.error('Nodemailer error:', mailErr);
+      throw mailErr;
+    }
+
+    res.status(201).json({ message: 'Complaint submitted successfully.' });
+  } catch (error) {
+    console.error('Complaint error:', error);
+    res.status(500).json({ error: 'Server error while submitting complaint.' });
   }
 });
 
