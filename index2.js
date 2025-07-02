@@ -352,7 +352,7 @@ const runPythonScript = (scriptPath, args, timeout = 60000) => {
 
     pythonProcess.stderr.on('data', (data) => {
       scriptError += data.toString();
-     // console.error('Python stderr:', data.toString());
+     console.error('Python stderr:', data.toString());
     });
 
     pythonProcess.on('error', (err) => {
