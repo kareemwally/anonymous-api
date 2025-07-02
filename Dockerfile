@@ -26,5 +26,5 @@ RUN python3 -m venv .venv && \
 # Expose the port the app runs on
 EXPOSE 3000
 
-# Start the server
+# Start the server 
 CMD ["npm", "start"] 
