@@ -342,17 +342,19 @@ async function sendToAIModel(filePath) {
 // Helper function to run Python script and get output
 const runPythonScript = (scriptPath, args, timeout = 60000) => {
   return new Promise((resolve, reject) => {
+    console.log('Running:', '.venv/bin/python3', scriptPath, ...args); // Log the command and arguments
     const pythonProcess = spawn('.venv/bin/python3', [scriptPath, ...args], { timeout });
     let scriptOutput = '';
     let scriptError = '';
 
     pythonProcess.stdout.on('data', (data) => {
       scriptOutput += data.toString();
+      console.log('PYTHON STDOUT:', data.toString()); // Log stdout
     });
 
     pythonProcess.stderr.on('data', (data) => {
       scriptError += data.toString();
-     console.error('Python stderr:', data.toString());
+      console.error('PYTHON STDERR:', data.toString()); // Log stderr
     });
 
     pythonProcess.on('error', (err) => {
