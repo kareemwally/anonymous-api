@@ -3,7 +3,7 @@ pefile==2023.2.7
 pyelftools==0.30
 androguard==3.4.0a1
 ssdeep==3.4
-oletools
+oletools==0.60.2
 pypdfium2==4.20.0
 matplotlib==3.5.0
-scipy
+scipy==1.15.3
