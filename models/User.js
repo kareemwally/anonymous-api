@@ -11,11 +11,6 @@ const userSchema = new mongoose.Schema({
   company: { type: String, required: false },
   googleId: { type: String, required: false, unique: true, sparse: true },
   githubId: { type: String, required: false, unique: true, sparse: true },
-  role: {
-    type: String,
-    enum: ['SYS admin', 'Malware analyst', 'developer', 'other'],
-    default: 'other'
-  }
 }, { timestamps: true });
 
 module.exports = mongoose.model('User', userSchema); 

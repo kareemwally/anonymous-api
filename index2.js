@@ -349,12 +349,12 @@ const runPythonScript = (scriptPath, args, timeout = 60000) => {
 
     pythonProcess.stdout.on('data', (data) => {
       scriptOutput += data.toString();
-      console.log('PYTHON STDOUT:', data.toString()); // Log stdout
+      // Removed: console.log('PYTHON STDOUT:', data.toString()); // Do not log analyzer JSON output
     });
 
     pythonProcess.stderr.on('data', (data) => {
       scriptError += data.toString();
-      console.error('PYTHON STDERR:', data.toString()); // Log stderr
+      // Removed: console.error('PYTHON STDERR:', data.toString()); // Log stderr
     });
 
     pythonProcess.on('error', (err) => {
@@ -404,7 +404,7 @@ app.post('/upload', optionalAuth, upload.single('file'), async (req, res) => {
 
   // Use req.user if present, otherwise guest (0)
   let userId = req.user ? req.user._id : 0;
-  console.log('Upload userId:', userId);
+  console.log('UserId:', userId);
 
   try {
     // Always call the analyzer with file, original name, and optional password
