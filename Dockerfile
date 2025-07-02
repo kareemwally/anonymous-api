@@ -6,8 +6,8 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Download and install official unrar 7.0.7 from RARLab
-RUN wget https://www.rarlab.com/rar/unrar-7.0.7-linux-x64.tar.gz && \
-    tar -xzvf unrar-7.0.7-linux-x64.tar.gz && \
+RUN wget https://www.rarlab.com/rar/unrar-7.0.7.tar.gz && \
+    tar -xzvf unrar-7.0.7.tar.gz && \
     cp unrar /usr/local/bin/unrar && \
     rm -rf unrar* && \
     chmod +x /usr/local/bin/unrar
