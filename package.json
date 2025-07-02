@@ -4,7 +4,7 @@
   "main": "index.js",
   "scripts": {
     "test": "nodemon test-auth.js",
-    "start": "nodemon index2.js"
+    "start": "node index2.js"
   },
   "keywords": [],
   "author": "",
