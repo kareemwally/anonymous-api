@@ -1,8 +1,8 @@
 FROM node:20
 
-# Install Python 3, pip, venv, libfuzzy-dev, 7z, unrar, rar, and p7zip-rar for archive extraction
+# Install Python 3, pip, venv, libfuzzy-dev, 7z for archive extraction
 RUN apt-get update && \
-    apt-get install -y python3 python3-pip python3-venv libfuzzy-dev p7zip-full unrar rar p7zip-rar libfreetype6-dev libpng-dev && \
+    apt-get install -y python3 python3-pip python3-venv libfuzzy-dev p7zip-full libfreetype6-dev libpng-dev && \
     rm -rf /var/lib/apt/lists/*
 
 # Set working directory
