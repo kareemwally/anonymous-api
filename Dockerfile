@@ -5,9 +5,9 @@ RUN apt-get update && \
     apt-get install -y python3 python3-pip python3-venv libfuzzy-dev p7zip-full libfreetype6-dev libpng-dev wget && \
     rm -rf /var/lib/apt/lists/*
 
-# Download and install official unrar from RARLab
-RUN wget https://www.rarlab.com/rar/unrar-linux-x64.tar.gz && \
-    tar -xzvf unrar-linux-x64.tar.gz && \
+# Download and install official unrar 7.0.7 from RARLab
+RUN wget https://www.rarlab.com/rar/unrar-7.0.7-linux-x64.tar.gz && \
+    tar -xzvf unrar-7.0.7-linux-x64.tar.gz && \
     cp unrar /usr/local/bin/unrar && \
     rm -rf unrar* && \
     chmod +x /usr/local/bin/unrar
