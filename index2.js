@@ -15,6 +15,7 @@ const session = require('express-session');
 const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const GitHubStrategy = require('passport-github2').Strategy;
+const rateLimit = require('express-rate-limit');
 const app = express();
 const port = 3000;
 
@@ -143,6 +144,20 @@ app.get('/auth/github/callback', passport.authenticate('github', { failureRedire
   const token = jwt.sign({ userId: req.user._id }, process.env.JWT_SECRET, { expiresIn: '24h' });
   res.redirect(`/oauth-success?token=${token}`);
 });
+
+// Rate limiting for complaints endpoint
+const complaintsRateLimit = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 5, // limit each IP to 5 complaints per hour
+  message: {
+    error: 'Too many complaints submitted from this IP, please try again after an hour.'
+  },
+  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+});
+
+// Apply rate limiting to complaints endpoint
+app.use('/complaints', complaintsRateLimit);
 
 // Authentication Routes
 app.post('/signup', async (req, res) => {
@@ -527,11 +542,12 @@ app.post('/upload', optionalAuth, upload.single('file'), async (req, res) => {
   }
 });
 
-// Complaints endpoint
+// Complaints endpoint with security validation
 app.post('/complaints', async (req, res) => {
   try {
     console.log('--- Incoming complaint request ---');
     console.log('Request body:', req.body);
+    
     // If user is authenticated, get userId from auth middleware
     let userId = null;
     let email = null;
@@ -546,32 +562,71 @@ app.post('/complaints', async (req, res) => {
         // Invalid token, ignore and treat as guest
       }
     }
+    
     // Accept email from body for guests
     if (req.body.email) {
       email = req.body.email;
       console.log('Guest email:', email);
     }
+    
     const { message } = req.body;
-    if (!message || (!userId && !email)) {
+    
+    // SECURITY VALIDATION
+    if (!message || typeof message !== 'string') {
+      return res.status(400).json({ error: 'Message is required and must be a string' });
+    }
+    
+    if (message.length < 1 || message.length > 1000) {
+      return res.status(400).json({ error: 'Message must be between 1 and 1000 characters' });
+    }
+    
+    // Check for suspicious patterns
+    const suspiciousPatterns = [
+      /<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,
+      /javascript:/gi,
+      /on\w+\s*=/gi,
+      /<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi,
+      /<object\b[^<]*(?:(?!<\/object>)<[^<]*)*<\/object>/gi,
+      /<embed\b[^<]*(?:(?!<\/embed>)<[^<]*)*<\/embed>/gi
+    ];
+    
+    for (const pattern of suspiciousPatterns) {
+      if (pattern.test(message)) {
+        return res.status(400).json({ error: 'Message contains forbidden content' });
+      }
+    }
+    
+    // Sanitize the message (simple HTML encoding)
+    const sanitizedMessage = message
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+    
+    if (!userId && !email) {
       console.log('Missing message or user/email');
       return res.status(400).json({ error: 'Message and (user or email) are required.' });
     }
+    
     const complaint = new Complaint({
       user: userId || undefined,
       email: email || undefined,
-      message
+      message: sanitizedMessage  // Use sanitized message
     });
+    
     await complaint.save();
     console.log('Complaint saved to DB:', complaint);
 
-    // Send email to support
+    // Send email to support (use sanitized message)
     const supportEmail = process.env.SUPPORT_EMAIL;
     let subject = 'New Complaint Submitted';
     let fromEmail = email || process.env.EMAIL_USER;
     let text = `A new complaint has been submitted.\n\n` +
       `From: ${email ? email : 'Authenticated User: ' + userId}\n` +
-      `Message: ${message}\n` +
+      `Message: ${sanitizedMessage}\n` +
       `Timestamp: ${complaint.createdAt}`;
+    
     try {
       let mailResult = await transporter.sendMail({
         from: fromEmail,
