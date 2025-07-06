@@ -131,18 +131,18 @@ passport.use(new GitHubStrategy({
 
 // Google OAuth routes
 app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
-app.get('/auth/google/callback', passport.authenticate('google', { failureRedirect: '/' }), (req, res) => {
-  // Issue JWT and redirect with token
+app.get('/auth/google/callback', passport.authenticate('google', { failureRedirect: 'https://anonymous-frontend-l5z5.vercel.app/' }), (req, res) => {
+  // Issue JWT and redirect to frontend with token
   const token = jwt.sign({ userId: req.user._id }, process.env.JWT_SECRET, { expiresIn: '24h' });
-  res.redirect(`/oauth-success?token=${token}`);
+  res.redirect(`https://anonymous-frontend-l5z5.vercel.app/?token=${token}`);
 });
 
 // GitHub OAuth routes
 app.get('/auth/github', passport.authenticate('github', { scope: ['user:email'] }));
-app.get('/auth/github/callback', passport.authenticate('github', { failureRedirect: '/' }), (req, res) => {
-  // Issue JWT and redirect with token
+app.get('/auth/github/callback', passport.authenticate('github', { failureRedirect: 'https://anonymous-frontend-l5z5.vercel.app/' }), (req, res) => {
+  // Issue JWT and redirect to frontend with token
   const token = jwt.sign({ userId: req.user._id }, process.env.JWT_SECRET, { expiresIn: '24h' });
-  res.redirect(`/oauth-success?token=${token}`);
+  res.redirect(`https://anonymous-frontend-l5z5.vercel.app/?token=${token}`);
 });
 
 // Rate limiting for complaints endpoint
@@ -158,6 +158,16 @@ const complaintsRateLimit = rateLimit({
 
 // Apply rate limiting to complaints endpoint
 app.use('/complaints', complaintsRateLimit);
+
+// Backward compatibility for OAuth success (redirects to frontend)
+app.get('/oauth-success', (req, res) => {
+  const token = req.query.token;
+  if (token) {
+    res.redirect(`https://anonymous-frontend-l5z5.vercel.app/?token=${token}`);
+  } else {
+    res.redirect('https://anonymous-frontend-l5z5.vercel.app/');
+  }
+});
 
 // Authentication Routes
 app.post('/signup', async (req, res) => {
