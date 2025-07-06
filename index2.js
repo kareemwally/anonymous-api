@@ -428,6 +428,8 @@ app.get('/api/plots/:filename', (req, res) => {
   });
 });
 
+const PLOTS_BASE_URL = process.env.PLOTS_BASE_URL || process.env.OAUTH_CALLBACK_BASE.replace(/\/$/, '');
+
 app.post('/upload', optionalAuth, upload.single('file'), async (req, res) => {
   if (!req.file) {
     console.log('No file uploaded');
@@ -464,8 +466,8 @@ app.post('/upload', optionalAuth, upload.single('file'), async (req, res) => {
       let dbReport = null;
       let aiResult = null;
       
-      // Convert plots to URIs served by the new endpoint
-      const plotLinks = (sample.plots || []).map(p => `/api/plots/${path.basename(p)}`);
+      // Convert plots to full URLs using PLOTS_BASE_URL
+      const plotLinks = (sample.plots || []).map(p => `${PLOTS_BASE_URL}/api/plots/${path.basename(p)}`);
       
       // Check if analysis returned an error (e.g., file size unsuitable)
       if (sample.analysis && sample.analysis.error) {
