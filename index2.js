@@ -417,6 +417,17 @@ function isFileSizeSuitable(filePath) {
   }
 }
 
+// New endpoint to serve plot images securely
+app.get('/api/plots/:filename', (req, res) => {
+  const filename = req.params.filename;
+  const filePath = path.join(__dirname, 'plots', filename);
+  res.sendFile(filePath, err => {
+    if (err) {
+      res.status(404).send('Plot not found');
+    }
+  });
+});
+
 app.post('/upload', optionalAuth, upload.single('file'), async (req, res) => {
   if (!req.file) {
     console.log('No file uploaded');
@@ -453,10 +464,8 @@ app.post('/upload', optionalAuth, upload.single('file'), async (req, res) => {
       let dbReport = null;
       let aiResult = null;
       
-          // Convert plots to full URLs - detect HTTPS properly
-    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-    const baseUrl = protocol + '://' + req.get('host');
-    const plotLinks = (sample.plots || []).map(p => p.startsWith('http') ? p : baseUrl + p);
+      // Convert plots to URIs served by the new endpoint
+      const plotLinks = (sample.plots || []).map(p => `/api/plots/${path.basename(p)}`);
       
       // Check if analysis returned an error (e.g., file size unsuitable)
       if (sample.analysis && sample.analysis.error) {
