@@ -443,7 +443,6 @@ app.post('/upload', optionalAuth, upload.single('file'), async (req, res) => {
     // For each sample, run get-hashes, check DB, and build response
     const results = [];
     const filesToCleanup = [];
-    const baseUrl = req.protocol + '://' + req.get('host');
     for (const sample of analysisResult.results) {
       // The analyzer returns: { filename, file_path, analysis, plots }
       const sampleFile = sample.filename;
@@ -454,8 +453,10 @@ app.post('/upload', optionalAuth, upload.single('file'), async (req, res) => {
       let dbReport = null;
       let aiResult = null;
       
-      // Convert plots to full URLs
-      const plotLinks = (sample.plots || []).map(p => p.startsWith('http') ? p : baseUrl + p);
+          // Convert plots to full URLs - detect HTTPS properly
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+    const baseUrl = protocol + '://' + req.get('host');
+    const plotLinks = (sample.plots || []).map(p => p.startsWith('http') ? p : baseUrl + p);
       
       // Check if analysis returned an error (e.g., file size unsuitable)
       if (sample.analysis && sample.analysis.error) {
