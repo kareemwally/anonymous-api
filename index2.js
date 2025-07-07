@@ -29,7 +29,11 @@ const Complaint = require('./models/Complaint');
 const auth = require('./middleware/auth');
 const optionalAuth = require('./middleware/optionalAuth');
 
-app.use(cors());
+const FRONTEND_ORIGIN = 'https://anonymous-frontend-l5z5.vercel.app';
+app.use(cors({
+  origin: FRONTEND_ORIGIN,
+  credentials: true
+}));
 app.use(express.json()); // For parsing JSON bodies
 
 // JWT Secret from environment
