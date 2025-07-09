@@ -441,6 +441,12 @@ app.post('/upload', optionalAuth, upload.single('file'), async (req, res) => {
     if (isArchive) args.push('--keep-extracted');
     const analysisResult = await runPythonScript('./py-scripts/Static Malware Analyzer.py', args);
 
+    // Check for password error from analyzer
+    if (analysisResult && analysisResult.error && analysisResult.error.trim() === 'password is wrong') {
+      fs.unlink(filePath, () => {});
+      return res.status(400).json({ error: 'password is wrong ' });
+    }
+
     // For each sample, run get-hashes, check DB, and build response
     const results = [];
     const filesToCleanup = [];
@@ -453,10 +459,8 @@ app.post('/upload', optionalAuth, upload.single('file'), async (req, res) => {
       let dbStatus = null;
       let dbReport = null;
       let aiResult = null;
-      
       // Convert plots to full URLs using PLOTS_BASE_URL
       const plotLinks = (sample.plots || []).map(p => `${PLOTS_BASE_URL}/api/plots/${path.basename(p)}`);
-      
       // Check if analysis returned an error (e.g., file size unsuitable)
       if (sample.analysis && sample.analysis.error) {
         results.push({
@@ -471,19 +475,41 @@ app.post('/upload', optionalAuth, upload.single('file'), async (req, res) => {
         });
         continue; // Skip AI processing for this sample
       }
-      
       if (samplePath) {
         try {
           hashResult = await runPythonScript('./py-scripts/get-hashes.py', [samplePath]);
           if (hashResult && hashResult.md5) {
-            const fileDoc = await File.findOne({ hash: hashResult.md5 });
-            if (fileDoc) {
-              dbStatus = 'found';
-              dbReport = await AnalysisReport.findOne({ fileId: fileDoc._id });
+            // Check if this user already uploaded this file (per-user deduplication)
+            const existingFile = await File.findOne({ hash: hashResult.md5, userId: userId });
+            if (existingFile) {
+              dbStatus = 'already_uploaded_by_user';
+              dbReport = await AnalysisReport.findOne({ fileId: existingFile._id });
             } else {
-              dbStatus = 'not_found';
-              // Check file size before sending to AI model
-              if (isFileSizeSuitable(samplePath)) {
+              // Create a new File document for this user/hash
+              const newFileDoc = await File.create({
+                name: sampleFile,
+                hash: hashResult.md5,
+                status: 'analyzed',
+                uploadDate: new Date(),
+                userId: userId
+              });
+              // Try to reuse existing AnalysisReport for this hash (from any user)
+              let existingReport = await AnalysisReport.findOne({ predictions_file: { $exists: true }, probability_file: { $exists: true }, predictions_family: { $exists: true }, probability_family: { $exists: true } });
+              if (!existingReport) {
+                // Check if any AnalysisReport exists for this hash (legacy or otherwise)
+                existingReport = await AnalysisReport.findOne({ hash: hashResult.md5 });
+              }
+              if (existingReport) {
+                dbReport = await AnalysisReport.create({
+                  fileId: newFileDoc._id,
+                  analysisDate: new Date(),
+                  predictions_file: existingReport.predictions_file,
+                  probability_file: existingReport.probability_file,
+                  predictions_family: existingReport.predictions_family,
+                  probability_family: existingReport.probability_family
+                });
+                dbStatus = 'reused_analysis';
+              } else if (isFileSizeSuitable(samplePath)) {
                 // Send to AI model and save results
                 try {
                   aiResult = await sendToAIModel(samplePath);
@@ -491,17 +517,7 @@ app.post('/upload', optionalAuth, upload.single('file'), async (req, res) => {
                   if (!aiResult.predictions_file) {
                     throw new Error('AI model did not return predictions_file');
                   }
-                  // Save file to database with userId (0 for guest, or ObjectId for user)
-                  const newFileDoc = await File.create({
-                    name: sampleFile,
-                    hash: hashResult.md5,
-                    status: 'analyzed',
-                    uploadDate: new Date(),
-                    userId: userId
-                  });
-
-                  // Save AI analysis report to database
-                  const newReportDoc = await AnalysisReport.create({
+                  dbReport = await AnalysisReport.create({
                     fileId: newFileDoc._id,
                     analysisDate: new Date(),
                     predictions_file: aiResult.predictions_file,
@@ -509,15 +525,12 @@ app.post('/upload', optionalAuth, upload.single('file'), async (req, res) => {
                     predictions_family: aiResult.predictions_family ?? [],
                     probability_family: aiResult.probability_family ?? []
                   });
-
-                  dbReport = newReportDoc;
                   dbStatus = 'ai_analyzed';
                 } catch (aiError) {
                   console.error('AI Model Error for sample:', sampleFile, aiError);
                   dbStatus = 'ai_failed';
                 }
               } else {
-                // File size not suitable for AI analysis
                 dbStatus = 'size_unsuitable';
                 console.log(`File ${sampleFile} skipped from AI analysis due to unsuitable size`);
               }
