@@ -29,7 +29,6 @@ const Complaint = require('./models/Complaint');
 const auth = require('./middleware/auth');
 const optionalAuth = require('./middleware/optionalAuth');
 
-const FRONTEND_ORIGIN = 'https://anonymous-frontend-l5z5.vercel.app';
 app.use(cors());
 app.use(express.json()); // For parsing JSON bodies
 
@@ -288,16 +287,10 @@ app.post('/login', async (req, res) => {
 app.get('/profile', auth, async (req, res) => {
   try {
     const user = req.user;
-    const page = parseInt(req.query.page) || 1;
-    const pageSize = 5;
-    // Find files uploaded by this user
+    // Remove pagination: fetch all files for the user
     const files = await File.find({ userId: user._id })
       .sort({ uploadDate: -1 })
-      .skip((page - 1) * pageSize)
-      .limit(pageSize)
       .lean();
-    // Get total count for pagination
-    const totalFiles = await File.countDocuments({ userId: user._id });
     // For each file, get the analysis report
     const fileIds = files.map(f => f._id);
     const reports = await AnalysisReport.find({ fileId: { $in: fileIds } }).lean();
@@ -329,13 +322,7 @@ app.get('/profile', auth, async (req, res) => {
         role: user.role,
         createdAt: user.createdAt
       },
-      history,
-      pagination: {
-        page,
-        pageSize,
-        totalFiles,
-        totalPages: Math.ceil(totalFiles / pageSize)
-      }
+      history
     });
   } catch (error) {
     console.error('Profile error:', error);
