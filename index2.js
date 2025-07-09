@@ -478,13 +478,13 @@ app.post('/upload', optionalAuth, upload.single('file'), async (req, res) => {
         try {
           hashResult = await runPythonScript('./py-scripts/get-hashes.py', [samplePath]);
           if (hashResult && hashResult.md5) {
-            // Check if this user already uploaded this file (per-user deduplication)
+            // Only check for existing file with BOTH hash and userId
             const existingFile = await File.findOne({ hash: hashResult.md5, userId: userId });
             if (existingFile) {
               dbStatus = 'already_uploaded_by_user';
               dbReport = await AnalysisReport.findOne({ fileId: existingFile._id });
             } else {
-              // Create a new File document for this user/hash
+              // Always create a new File document for this user/hash
               const newFileDoc = await File.create({
                 name: sampleFile,
                 hash: hashResult.md5,
@@ -492,8 +492,8 @@ app.post('/upload', optionalAuth, upload.single('file'), async (req, res) => {
                 uploadDate: new Date(),
                 userId: userId
               });
-              // Try to reuse existing AnalysisReport for this hash (from any user)
-              let existingReport = await AnalysisReport.findOne({ predictions_file: { $exists: true }, probability_file: { $exists: true }, predictions_family: { $exists: true }, probability_family: { $exists: true } });
+              // Reuse analysis if available (from any file with same hash)
+              let existingReport = await AnalysisReport.findOne({ predictions_file: { $exists: true }, probability_file: { $exists: true }, predictions_family: { $exists: true }, probability_family: { $exists: true }, fileId: { $ne: newFileDoc._id } });
               if (!existingReport) {
                 // Check if any AnalysisReport exists for this hash (legacy or otherwise)
                 existingReport = await AnalysisReport.findOne({ hash: hashResult.md5 });
