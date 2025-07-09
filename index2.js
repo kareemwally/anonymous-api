@@ -342,7 +342,7 @@ async function sendToAIModel(filePath) {
 
     const response = await axios.post(AI_MODEL_URL, payload, {
       headers: AI_MODEL_HEADERS,
-      timeout: 30000 // 30 seconds timeout
+      timeout: 120000 // 120 seconds (2 minutes) timeout for larger files
     });
 
     return response.data;
