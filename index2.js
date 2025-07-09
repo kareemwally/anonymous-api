@@ -355,19 +355,16 @@ async function sendToAIModel(filePath) {
 // Helper function to run Python script and get output
 const runPythonScript = (scriptPath, args, timeout = 60000) => {
   return new Promise((resolve, reject) => {
-    console.log('Running:', '.venv/bin/python3', scriptPath, ...args); // Log the command and arguments
     const pythonProcess = spawn('.venv/bin/python3', [scriptPath, ...args], { timeout });
     let scriptOutput = '';
     let scriptError = '';
 
     pythonProcess.stdout.on('data', (data) => {
       scriptOutput += data.toString();
-      // Removed: console.log('PYTHON STDOUT:', data.toString()); // Do not log analyzer JSON output
     });
 
     pythonProcess.stderr.on('data', (data) => {
       scriptError += data.toString();
-      // Removed: console.error('PYTHON STDERR:', data.toString()); // Log stderr
     });
 
     pythonProcess.on('error', (err) => {
@@ -375,17 +372,19 @@ const runPythonScript = (scriptPath, args, timeout = 60000) => {
     });
 
     pythonProcess.on('close', (code, signal) => {
-      if (signal === 'SIGTERM') {
-        reject(new Error('Python script timed out.'));
-      } else if (code !== 0) {
-        reject(new Error(`Python script exited with code ${code}: ${scriptError}`));
-      } else {
-        try {
-          const result = JSON.parse(scriptOutput);
+      // Always try to parse stdout as JSON
+      try {
+        const result = JSON.parse(scriptOutput);
+        // If the script exited with error and result has an error field, resolve with it
+        if (code !== 0 && result && result.error) {
           resolve(result);
-        } catch (e) {
-          reject(new Error(`Failed to parse Python output: ${e.message}`));
+        } else if (code !== 0) {
+          reject(new Error(`Python script exited with code ${code}: ${scriptError}`));
+        } else {
+          resolve(result);
         }
+      } catch (e) {
+        reject(new Error(`Failed to parse Python output: ${e.message}`));
       }
     });
   });
