@@ -505,26 +505,10 @@ app.post('/upload', optionalAuth, upload.single('file'), async (req, res) => {
                 uploadDate: new Date(),
                 userId: userId
               });
-              // Reuse analysis if available (from any file with same hash)
-              let existingReport = await AnalysisReport.findOne({ predictions_file: { $exists: true }, probability_file: { $exists: true }, predictions_family: { $exists: true }, probability_family: { $exists: true }, fileId: { $ne: newFileDoc._id } });
-              if (!existingReport) {
-                // Check if any AnalysisReport exists for this hash (legacy or otherwise)
-                existingReport = await AnalysisReport.findOne({ hash: hashResult.md5 });
-              }
-              if (existingReport) {
-                dbReport = await AnalysisReport.create({
-                  fileId: newFileDoc._id,
-                  analysisDate: new Date(),
-                  predictions_file: existingReport.predictions_file,
-                  probability_file: existingReport.probability_file,
-                  predictions_family: existingReport.predictions_family,
-                  probability_family: existingReport.probability_family
-                });
-                dbStatus = 'reused_analysis';
-                console.log(`Sample ${sampleFile}: reused analysis from existing report, skipping AI.`);
-              } else if (isFileSizeSuitable(samplePath)) {
+              // REMOVE: Reuse analysis from other users/files
+              // Always run AI model if file size is suitable
+              if (isFileSizeSuitable(samplePath)) {
                 console.log(`Sample ${sampleFile}: file size suitable, sending to AI model...`);
-                // Send to AI model and save results
                 try {
                   aiResult = await sendToAIModel(samplePath);
                   console.log(`Sample ${sampleFile}: AI model response:`, JSON.stringify(aiResult));
