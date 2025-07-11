@@ -429,7 +429,16 @@ app.post('/upload', optionalAuth, upload.single('file'), async (req, res) => {
 
   // Use req.user if present, otherwise guest (0)
   let userId = req.user ? req.user._id : 0;
-  console.log('UserId:', userId);
+  console.log('--- Upload Start ---');
+  console.log(`UserId: ${userId}`);
+  console.log(`Original filename: ${originalName}`);
+  console.log(`File path: ${filePath}`);
+  try {
+    const stats = fs.statSync(filePath);
+    console.log(`File size: ${stats.size} bytes`);
+  } catch (e) {
+    console.log('Could not get file size:', e.message);
+  }
 
   try {
     // Always call the analyzer with file, original name, and optional password
@@ -439,10 +448,12 @@ app.post('/upload', optionalAuth, upload.single('file'), async (req, res) => {
     const isArchive = /\.(zip|rar|7z)$/i.test(originalName);
     if (isArchive) args.push('--keep-extracted');
     const analysisResult = await runPythonScript('./py-scripts/Static Malware Analyzer.py', args);
+    console.log('Static analyzer result:', JSON.stringify(analysisResult));
 
     // Check for password error from analyzer
     if (analysisResult && analysisResult.error && analysisResult.error.trim() === 'password is wrong') {
       fs.unlink(filePath, () => {});
+      console.log('Password error detected: password is wrong');
       return res.status(400).json({ error: 'password is wrong ' });
     }
 
@@ -462,6 +473,7 @@ app.post('/upload', optionalAuth, upload.single('file'), async (req, res) => {
       const plotLinks = (sample.plots || []).map(p => `${PLOTS_BASE_URL}/api/plots/${path.basename(p)}`);
       // Check if analysis returned an error (e.g., file size unsuitable)
       if (sample.analysis && sample.analysis.error) {
+        console.log(`Sample ${sampleFile}: analysis error: ${sample.analysis.error}`);
         results.push({
           filename: sampleFile,
           analysis: sample.analysis,
@@ -483,6 +495,7 @@ app.post('/upload', optionalAuth, upload.single('file'), async (req, res) => {
             if (existingFile) {
               dbStatus = 'already_uploaded_by_user';
               dbReport = await AnalysisReport.findOne({ fileId: existingFile._id });
+              console.log(`Sample ${sampleFile}: already uploaded by user, skipping AI.`);
             } else {
               // Always create a new File document for this user/hash
               const newFileDoc = await File.create({
@@ -508,11 +521,13 @@ app.post('/upload', optionalAuth, upload.single('file'), async (req, res) => {
                   probability_family: existingReport.probability_family
                 });
                 dbStatus = 'reused_analysis';
+                console.log(`Sample ${sampleFile}: reused analysis from existing report, skipping AI.`);
               } else if (isFileSizeSuitable(samplePath)) {
+                console.log(`Sample ${sampleFile}: file size suitable, sending to AI model...`);
                 // Send to AI model and save results
                 try {
                   aiResult = await sendToAIModel(samplePath);
-                  console.log('AI Model Response:', aiResult);
+                  console.log(`Sample ${sampleFile}: AI model response:`, JSON.stringify(aiResult));
                   if (!aiResult.predictions_file) {
                     throw new Error('AI model did not return predictions_file');
                   }
@@ -526,22 +541,25 @@ app.post('/upload', optionalAuth, upload.single('file'), async (req, res) => {
                   });
                   dbStatus = 'ai_analyzed';
                 } catch (aiError) {
-                  console.error('AI Model Error for sample:', sampleFile, aiError);
+                  console.error(`Sample ${sampleFile}: AI Model Error:`, aiError);
                   dbStatus = 'ai_failed';
                 }
               } else {
                 dbStatus = 'size_unsuitable';
-                console.log(`File ${sampleFile} skipped from AI analysis due to unsuitable size`);
+                console.log(`Sample ${sampleFile}: file size NOT suitable for AI analysis, skipping AI.`);
               }
             }
           } else {
             dbStatus = 'hash_failed';
+            console.log(`Sample ${sampleFile}: hash generation failed.`);
           }
         } catch (err) {
           dbStatus = 'hash_error';
+          console.log(`Sample ${sampleFile}: error during hash generation:`, err);
         }
       } else {
         dbStatus = 'not_available';
+        console.log(`Sample ${sampleFile}: sample path not available.`);
       }
       results.push({
         filename: sampleFile,
@@ -552,14 +570,18 @@ app.post('/upload', optionalAuth, upload.single('file'), async (req, res) => {
         dbReport,
         aiResult
       });
+      console.log(`Sample ${sampleFile}: dbStatus = ${dbStatus}`);
+      console.log(`Sample ${sampleFile}: analysis result:`, JSON.stringify(sample.analysis));
     }
     res.json({ results });
     // Clean up uploaded file and extracted files
     fs.unlink(filePath, () => {});
     for (const f of filesToCleanup) fs.unlink(f, () => {});
+    console.log('--- Upload End ---');
   } catch (error) {
     console.error('Error processing file:', error);
     fs.unlink(filePath, () => {});
+    console.log('--- Upload End (Error) ---');
     res.status(500).send(error.message);
   }
 });
