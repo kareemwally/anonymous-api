@@ -90,16 +90,33 @@ passport.use(new GoogleStrategy({
   try {
     let user = await User.findOne({ googleId: profile.id });
     if (!user) {
+      // Try to find by email/username in case user already exists with another provider
+      const email = profile.emails[0].value;
+      user = await User.findOne({ $or: [{ email }, { username: email }] });
+      if (user) {
+        // Link Google ID to existing user
+        user.googleId = profile.id;
+        await user.save();
+        return done(null, user);
+      }
+      // Otherwise, create new user
       user = await User.create({
         name: profile.displayName,
-        email: profile.emails[0].value,
-        username: profile.emails[0].value,
+        email: email,
+        username: email,
         googleId: profile.id,
         role: 'other'
       });
     }
     return done(null, user);
   } catch (err) {
+    // Handle duplicate key error gracefully
+    if (err.code === 11000 && err.keyPattern && err.keyPattern.username) {
+      // Find the existing user by username/email
+      const email = profile.emails[0].value;
+      const user = await User.findOne({ $or: [{ email }, { username: email }] });
+      if (user) return done(null, user);
+    }
     return done(err, null);
   }
 }));
@@ -115,6 +132,15 @@ passport.use(new GitHubStrategy({
     let email = (profile.emails && profile.emails[0] && profile.emails[0].value) || `${profile.username}@github.com`;
     let user = await User.findOne({ githubId: profile.id });
     if (!user) {
+      // Try to find by email/username in case user already exists with another provider
+      user = await User.findOne({ $or: [{ email }, { username: email }] });
+      if (user) {
+        // Link GitHub ID to existing user
+        user.githubId = profile.id;
+        await user.save();
+        return done(null, user);
+      }
+      // Otherwise, create new user
       user = await User.create({
         name: profile.displayName || profile.username,
         email: email,
@@ -125,6 +151,13 @@ passport.use(new GitHubStrategy({
     }
     return done(null, user);
   } catch (err) {
+    // Handle duplicate key error gracefully
+    if (err.code === 11000 && err.keyPattern && err.keyPattern.username) {
+      // Find the existing user by username/email
+      let email = (profile.emails && profile.emails[0] && profile.emails[0].value) || `${profile.username}@github.com`;
+      const user = await User.findOne({ $or: [{ email }, { username: email }] });
+      if (user) return done(null, user);
+    }
     return done(err, null);
   }
 }));
@@ -447,8 +480,9 @@ app.post('/upload', optionalAuth, upload.single('file'), async (req, res) => {
     // If archive, add --keep-extracted flag
     const isArchive = /\.(zip|rar|7z)$/i.test(originalName);
     if (isArchive) args.push('--keep-extracted');
+    console.log('Running static analyzer Python script...');
     const analysisResult = await runPythonScript('./py-scripts/Static Malware Analyzer.py', args);
-    console.log('Static analyzer result:', JSON.stringify(analysisResult));
+    console.log('Static analyzer finished.');
 
     // Check for password error from analyzer
     if (analysisResult && analysisResult.error && analysisResult.error.trim() === 'password is wrong') {
@@ -461,7 +495,6 @@ app.post('/upload', optionalAuth, upload.single('file'), async (req, res) => {
     const results = [];
     const filesToCleanup = [];
     for (const sample of analysisResult.results) {
-      // The analyzer returns: { filename, file_path, analysis, plots }
       const sampleFile = sample.filename;
       const samplePath = sample.file_path;
       if (samplePath && samplePath !== filePath) filesToCleanup.push(samplePath);
@@ -469,9 +502,7 @@ app.post('/upload', optionalAuth, upload.single('file'), async (req, res) => {
       let dbStatus = null;
       let dbReport = null;
       let aiResult = null;
-      // Convert plots to full URLs using PLOTS_BASE_URL
       const plotLinks = (sample.plots || []).map(p => `${PLOTS_BASE_URL}/api/plots/${path.basename(p)}`);
-      // Check if analysis returned an error (e.g., file size unsuitable)
       if (sample.analysis && sample.analysis.error) {
         console.log(`Sample ${sampleFile}: analysis error: ${sample.analysis.error}`);
         results.push({
@@ -484,20 +515,22 @@ app.post('/upload', optionalAuth, upload.single('file'), async (req, res) => {
           aiResult: null,
           error: sample.analysis.error
         });
-        continue; // Skip AI processing for this sample
+        continue;
       }
+      console.log(`Processing sample: ${sampleFile}`);
       if (samplePath) {
         try {
+          console.log('Running hash calculation Python script...');
           hashResult = await runPythonScript('./py-scripts/get-hashes.py', [samplePath]);
+          console.log('Hash calculation finished.');
           if (hashResult && hashResult.md5) {
-            // Only check for existing file with BOTH hash and userId
             const existingFile = await File.findOne({ hash: hashResult.md5, userId: userId });
             if (existingFile) {
               dbStatus = 'already_uploaded_by_user';
               dbReport = await AnalysisReport.findOne({ fileId: existingFile._id });
-              console.log(`Sample ${sampleFile}: already uploaded by user, skipping AI.`);
+              console.log('File already uploaded by this user. Skipping AI.');
             } else {
-              // Always create a new File document for this user/hash
+              console.log('New file for this user. Creating DB record.');
               const newFileDoc = await File.create({
                 name: sampleFile,
                 hash: hashResult.md5,
@@ -505,13 +538,11 @@ app.post('/upload', optionalAuth, upload.single('file'), async (req, res) => {
                 uploadDate: new Date(),
                 userId: userId
               });
-              // REMOVE: Reuse analysis from other users/files
-              // Always run AI model if file size is suitable
               if (isFileSizeSuitable(samplePath)) {
-                console.log(`Sample ${sampleFile}: file size suitable, sending to AI model...`);
+                console.log('File size suitable. Sending to AI model...');
                 try {
                   aiResult = await sendToAIModel(samplePath);
-                  console.log(`Sample ${sampleFile}: AI model response:`, JSON.stringify(aiResult));
+                  console.log('AI model analysis finished.');
                   if (!aiResult.predictions_file) {
                     throw new Error('AI model did not return predictions_file');
                   }
@@ -524,13 +555,15 @@ app.post('/upload', optionalAuth, upload.single('file'), async (req, res) => {
                     probability_family: aiResult.probability_family ?? []
                   });
                   dbStatus = 'ai_analyzed';
+                  console.log('Analysis report saved to database.');
                 } catch (aiError) {
+                  console.log('AI model analysis failed.');
                   console.error(`Sample ${sampleFile}: AI Model Error:`, aiError);
                   dbStatus = 'ai_failed';
                 }
               } else {
                 dbStatus = 'size_unsuitable';
-                console.log(`Sample ${sampleFile}: file size NOT suitable for AI analysis, skipping AI.`);
+                console.log('File size not suitable for AI analysis. Skipping AI.');
               }
             }
           } else {
@@ -558,7 +591,6 @@ app.post('/upload', optionalAuth, upload.single('file'), async (req, res) => {
       console.log(`Sample ${sampleFile}: analysis result:`, JSON.stringify(sample.analysis));
     }
     res.json({ results });
-    // Clean up uploaded file and extracted files
     fs.unlink(filePath, () => {});
     for (const f of filesToCleanup) fs.unlink(f, () => {});
     console.log('--- Upload End ---');
