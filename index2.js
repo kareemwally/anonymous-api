@@ -29,6 +29,11 @@ const Complaint = require('./models/Complaint');
 const auth = require('./middleware/auth');
 const optionalAuth = require('./middleware/optionalAuth');
 
+// Import helper functions
+const sendToAIModel = require('./helpers/sendToAIModel'); // Sends file to AI model for analysis
+const runPythonScript = require('./helpers/runPythonScript'); // Runs a Python script and returns JSON output
+const isFileSizeSuitable = require('./helpers/isFileSizeSuitable'); // Checks if file size is suitable for AI analysis
+
 app.use(cors());
 app.use(express.json()); // For parsing JSON bodies
 
@@ -363,80 +368,6 @@ app.get('/profile', auth, async (req, res) => {
   }
 });
 
-// Helper function to send file to AI model
-async function sendToAIModel(filePath) {
-  try {
-    const fileContent = fs.readFileSync(filePath);
-    const base64Content = fileContent.toString('base64');
-    
-    const payload = {
-      file_bytes: base64Content
-    };
-
-    const response = await axios.post(AI_MODEL_URL, payload, {
-      headers: AI_MODEL_HEADERS,
-      timeout: 120000 // 120 seconds (2 minutes) timeout for larger files
-    });
-
-    return response.data;
-  } catch (error) {
-    console.error('AI Model Error:', error.response?.data || error.message);
-    throw new Error(`AI Model request failed: ${error.message}`);
-  }
-}
-
-// Helper function to run Python script and get output
-const runPythonScript = (scriptPath, args, timeout = 60000) => {
-  return new Promise((resolve, reject) => {
-    const pythonProcess = spawn('.venv/bin/python3', [scriptPath, ...args], { timeout });
-    let scriptOutput = '';
-    let scriptError = '';
-
-    pythonProcess.stdout.on('data', (data) => {
-      scriptOutput += data.toString();
-    });
-
-    pythonProcess.stderr.on('data', (data) => {
-      scriptError += data.toString();
-    });
-
-    pythonProcess.on('error', (err) => {
-      reject(new Error(`Failed to start Python process: ${err.message}`));
-    });
-
-    pythonProcess.on('close', (code, signal) => {
-      // Always try to parse stdout as JSON
-      try {
-        const result = JSON.parse(scriptOutput);
-        // If the script exited with error and result has an error field, resolve with it
-        if (code !== 0 && result && result.error) {
-          resolve(result);
-        } else if (code !== 0) {
-          reject(new Error(`Python script exited with code ${code}: ${scriptError}`));
-        } else {
-          resolve(result);
-        }
-      } catch (e) {
-        reject(new Error(`Failed to parse Python output: ${e.message}`));
-      }
-    });
-  });
-};
-
-// Helper function to check if file size is suitable for AI analysis
-function isFileSizeSuitable(filePath) {
-  try {
-    const stats = fs.statSync(filePath);
-    const sizeInBytes = stats.size;
-    const minSize = 1024; // 1KB
-    const maxSize = 25 * 1024 * 1024; // 25MB
-    return sizeInBytes >= minSize && sizeInBytes <= maxSize;
-  } catch (error) {
-    console.error('Error checking file size:', error);
-    return false;
-  }
-}
-
 // New endpoint to serve plot images securely
 app.get('/api/plots/:filename', (req, res) => {
   const filename = req.params.filename;
@@ -481,7 +412,7 @@ app.post('/upload', optionalAuth, upload.single('file'), async (req, res) => {
     const isArchive = /\.(zip|rar|7z)$/i.test(originalName);
     if (isArchive) args.push('--keep-extracted');
     console.log('Running static analyzer Python script...');
-    const analysisResult = await runPythonScript('./py-scripts/Static Malware Analyzer.py', args);
+    const analysisResult = await runPythonScript(filePath, originalName, password, isArchive);
     console.log('Static analyzer finished.');
 
     // Check for password error from analyzer
@@ -521,7 +452,7 @@ app.post('/upload', optionalAuth, upload.single('file'), async (req, res) => {
       if (samplePath) {
         try {
           console.log('Running hash calculation Python script...');
-          hashResult = await runPythonScript('./py-scripts/get-hashes.py', [samplePath]);
+          hashResult = await runPythonScript(samplePath);
           console.log('Hash calculation finished.');
           if (hashResult && hashResult.md5) {
             const existingFile = await File.findOne({ hash: hashResult.md5, userId: userId });
@@ -538,10 +469,10 @@ app.post('/upload', optionalAuth, upload.single('file'), async (req, res) => {
                 uploadDate: new Date(),
                 userId: userId
               });
-              if (isFileSizeSuitable(samplePath)) {
+              if (isFileSizeSuitable(filePath)) {
                 console.log('File size suitable. Sending to AI model...');
                 try {
-                  aiResult = await sendToAIModel(samplePath);
+                  aiResult = await sendToAIModel(filePath);
                   console.log('AI model analysis finished.');
                   if (!aiResult.predictions_file) {
                     throw new Error('AI model did not return predictions_file');

@@ -8,6 +8,9 @@ except ImportError:
     SSDEEP_AVAILABLE = False
 
 def calculate_hashes(file_path):
+    """
+    Calculates various cryptographic hashes for a given file.
+    """
     hashes = {}
     try:
         with open(file_path, 'rb') as f:
